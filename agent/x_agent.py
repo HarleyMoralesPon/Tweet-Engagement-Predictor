@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -18,8 +19,103 @@ from agent.browser import (
 )
 
 
+# ==========================================
+# Logging
+# ==========================================
+
 logger = logging.getLogger(__name__)
 
+
+# ==========================================
+# Extract number from aria-label
+# ==========================================
+
+def extract_number(
+    value: str | None,
+) -> int:
+
+    if not value:
+        return 0
+
+    value = value.lower().strip()
+
+    # --------------------------------------
+    # Handle K / M / B notation
+    # --------------------------------------
+
+    match = re.search(
+        r"([\d,.]+)\s*([kmb])?",
+        value,
+    )
+
+    if not match:
+        return 0
+
+    number = match.group(1)
+
+    suffix = match.group(2)
+
+    number = number.replace(",", "")
+
+    try:
+        number = float(number)
+
+    except ValueError:
+        return 0
+
+    if suffix == "k":
+        number *= 1_000
+
+    elif suffix == "m":
+        number *= 1_000_000
+
+    elif suffix == "b":
+        number *= 1_000_000_000
+
+    return int(number)
+
+
+# ==========================================
+# Extract metric from tweet
+# ==========================================
+
+def get_metric(
+    article,
+    metric_name: str,
+) -> int:
+
+    element = article.locator(
+        f'[aria-label="{metric_name}"]'
+    )
+
+    if element.count() == 0:
+        return 0
+
+    parent = element.locator("..")
+
+    buttons = parent.locator("button")
+
+    # The first button is the icon.
+    # The second button contains the number.
+
+    if buttons.count() < 2:
+        return 0
+
+    try:
+
+        value_text = buttons.nth(1).inner_text()
+
+    except Exception:
+
+        return 0
+
+    return extract_number(
+        value_text
+    )
+
+# ==========================================
+# Open X profile
+# ==========================================
 
 def open_user_profile(
     page,
@@ -30,40 +126,22 @@ def open_user_profile(
         f"{X_BASE_URL}/{username}"
     )
 
+    logger.info(
+        "Opening profile: %s",
+        profile_url,
+    )
+
     page.goto(
         profile_url,
         wait_until="domcontentloaded",
     )
 
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(4000)
 
 
-def extract_number(
-    value: str,
-) -> int | None:
-
-    import re
-
-    match = re.search(
-        r"([\d,.]+)",
-        value,
-    )
-
-    if not match:
-        return None
-
-    number = (
-        match.group(1)
-        .replace(",", "")
-        .replace(".", "")
-    )
-
-    try:
-        return int(number)
-
-    except ValueError:
-        return None
-
+# ==========================================
+# Collect visible tweets
+# ==========================================
 
 def collect_visible_posts(
     page,
@@ -71,42 +149,64 @@ def collect_visible_posts(
 ) -> list[dict]:
 
     collected_posts = []
+
     seen_ids = set()
 
     while len(collected_posts) < max_tweets:
 
-        articles = page.locator("article")
+        articles = page.locator(
+            "article"
+        )
 
         count = articles.count()
+
+        logger.info(
+            "Visible tweet articles: %d",
+            count,
+        )
 
         for i in range(count):
 
             article = articles.nth(i)
 
+
+            # ==================================
+            # Tweet text
+            # ==================================
+
             try:
+
                 text = article.inner_text()
 
             except Exception:
+
                 continue
 
             if not text:
                 continue
 
-            # --------------------------------------
-            # Tweet URL / ID
-            # --------------------------------------
+            # ==================================
+            # Tweet URL
+            # ==================================
 
             links = article.locator("a")
 
             tweet_url = None
 
-            for j in range(links.count()):
+            for j in range(
+                links.count()
+            ):
 
-                href = links.nth(j).get_attribute(
-                    "href"
+                href = (
+                    links
+                    .nth(j)
+                    .get_attribute("href")
                 )
 
-                if href and "/status/" in href:
+                if (
+                    href
+                    and "/status/" in href
+                ):
 
                     tweet_url = href
 
@@ -114,6 +214,10 @@ def collect_visible_posts(
 
             if not tweet_url:
                 continue
+
+            # ==================================
+            # Tweet ID
+            # ==================================
 
             tweet_id = (
                 tweet_url
@@ -126,11 +230,13 @@ def collect_visible_posts(
 
             seen_ids.add(tweet_id)
 
-            # --------------------------------------
+            # ==================================
             # Publication date
-            # --------------------------------------
+            # ==================================
 
-            time_element = article.locator("time")
+            time_element = article.locator(
+                "time"
+            )
 
             created_at = None
 
@@ -139,123 +245,115 @@ def collect_visible_posts(
                 created_at = (
                     time_element
                     .first
-                    .get_attribute("datetime")
+                    .get_attribute(
+                        "datetime"
+                    )
                 )
 
-            # --------------------------------------
+            # ==================================
             # Engagement metrics
-            # --------------------------------------
+            # ==================================
 
-            like_count = 0
-            reply_count = 0
-            repost_count = 0
-            quote_count = 0
-            bookmark_count = 0
-
-            buttons = article.locator(
-                '[role="button"]'
+            reply_count = get_metric(
+                article,
+                "Reply",
             )
 
-            for j in range(buttons.count()):
+            repost_count = get_metric(
+                article,
+                "Repost",
+            )
 
-                button = buttons.nth(j)
+            like_count = get_metric(
+                article,
+                "Like",
+            )
 
-                try:
+            view_count = get_metric(
+                article,
+                "View count",
+            )
 
-                    aria_label = (
-                        button
-                        .get_attribute("aria-label")
-                    )
+            bookmark_count = get_metric(
+                article,
+                "Bookmark",
+            )
 
-                    if not aria_label:
-                        continue
+            # ==================================
+            # Create tweet record
+            # ==================================
 
-                    label = aria_label.lower()
+            post = {
 
-                    # Replies
-                    if "repl" in label:
+                "tweet_id":
+                    tweet_id,
 
-                        value = extract_number(
-                            aria_label
-                        )
+                "text":
+                    text,
 
-                        if value is not None:
-                            reply_count = value
+                "tweet_url":
+                    f"{X_BASE_URL}{tweet_url}",
 
-                    # Reposts
-                    elif (
-                        "repost" in label
-                        or "retweet" in label
-                    ):
+                "created_at":
+                    created_at,
 
-                        value = extract_number(
-                            aria_label
-                        )
+                "like_count":
+                    like_count,
 
-                        if value is not None:
-                            repost_count = value
+                "reply_count":
+                    reply_count,
 
-                    # Likes
-                    elif "like" in label:
+                "repost_count":
+                    repost_count,
 
-                        value = extract_number(
-                            aria_label
-                        )
+                "quote_count":
+                    0,
 
-                        if value is not None:
-                            like_count = value
+                "bookmark_count":
+                    bookmark_count,
 
-                    # Bookmarks
-                    elif "bookmark" in label:
-
-                        value = extract_number(
-                            aria_label
-                        )
-
-                        if value is not None:
-                            bookmark_count = value
-
-                except Exception:
-                    continue
-
-            # --------------------------------------
-            # Save tweet
-            # --------------------------------------
+                "view_count":
+                    view_count,
+            }
 
             collected_posts.append(
-                {
-                    "tweet_id": tweet_id,
-
-                    "text": text,
-
-                    "tweet_url": (
-                        f"{X_BASE_URL}"
-                        f"{tweet_url}"
-                    ),
-
-                    "created_at": created_at,
-
-                    "like_count": like_count,
-
-                    "reply_count": reply_count,
-
-                    "repost_count": repost_count,
-
-                    "quote_count": quote_count,
-
-                    "bookmark_count": bookmark_count,
-                }
+                post
             )
 
-            if len(collected_posts) >= max_tweets:
+            logger.info(
+                "Tweet %s | likes=%d | replies=%d | reposts=%d | bookmarks=%d",
+                tweet_id,
+                like_count,
+                reply_count,
+                repost_count,
+                bookmark_count,
+            )
+
+            # ==================================
+            # Stop when enough tweets collected
+            # ==================================
+
+            if (
+                len(collected_posts)
+                >= max_tweets
+            ):
+
                 break
 
-        # --------------------------------------
-        # Scroll
-        # --------------------------------------
+        # ======================================
+        # Stop if enough tweets
+        # ======================================
 
-        if len(collected_posts) >= max_tweets:
+        if (
+            len(collected_posts)
+            >= max_tweets
+        ):
+
             break
+
+        # ======================================
+        # Scroll down
+        # ======================================
 
         previous_count = len(
             collected_posts
@@ -267,8 +365,12 @@ def collect_visible_posts(
         )
 
         page.wait_for_timeout(
-            2000
+            2500
         )
+
+        # ======================================
+        # No new tweets
+        # ======================================
 
         if (
             len(collected_posts)
@@ -282,6 +384,10 @@ def collect_visible_posts(
             break
 
     return collected_posts
+
+# ==========================================
+# Save raw dataset
+# ==========================================
 
 def save_raw_data(
     posts: list[dict],
@@ -306,6 +412,10 @@ def save_raw_data(
         filepath,
     )
 
+
+# ==========================================
+# Complete agent
+# ==========================================
 
 def run_agent() -> pd.DataFrame:
 
