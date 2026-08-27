@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import re
 import logging
 import re
 from pathlib import Path
@@ -78,41 +78,66 @@ def extract_number(
 # ==========================================
 # Extract metric from tweet
 # ==========================================
-
 def get_metric(
     article,
     metric_name: str,
 ) -> int:
 
-    element = article.locator(
-        f'[aria-label="{metric_name}"]'
+    # Find an element containing the combined engagement metrics
+    metric_elements = article.locator(
+        '[aria-label*="likes"][aria-label*="views"]'
     )
 
-    if element.count() == 0:
+    if metric_elements.count() == 0:
         return 0
 
-    parent = element.locator("..")
+    for i in range(metric_elements.count()):
 
-    buttons = parent.locator("button")
+        try:
 
-    # The first button is the icon.
-    # The second button contains the number.
+            aria_label = metric_elements.nth(i).get_attribute(
+                "aria-label"
+            )
 
-    if buttons.count() < 2:
-        return 0
+            if not aria_label:
+                continue
 
-    try:
+            # Example:
+            # "8 reposts, 9 likes, 1765 views"
 
-        value_text = buttons.nth(1).inner_text()
+            if metric_name.lower() == "like":
+                match = re.search(
+                    r"([\d.,]+)\s+likes?",
+                    aria_label,
+                    re.IGNORECASE
+                )
 
-    except Exception:
+            elif metric_name.lower() == "repost":
+                match = re.search(
+                    r"([\d.,]+)\s+reposts?",
+                    aria_label,
+                    re.IGNORECASE
+                )
 
-        return 0
+            elif metric_name.lower() == "view count":
+                match = re.search(
+                    r"([\d.,]+)\s+views?",
+                    aria_label,
+                    re.IGNORECASE
+                )
 
-    return extract_number(
-        value_text
-    )
+            else:
+                return 0
 
+            if match:
+                return extract_number(
+                    match.group(1)
+                )
+
+        except Exception:
+            continue
+
+    return 0
 # ==========================================
 # Open X profile
 # ==========================================
@@ -189,6 +214,8 @@ def collect_visible_posts(
         for i in range(count):
 
             article = articles.nth(i)
+
+            page.wait_for_timeout(500)
 
             # ==================================
             # Tweet text
