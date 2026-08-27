@@ -1,36 +1,20 @@
-from playwright.sync_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    sync_playwright,
-)
-
-from config import HEADLESS, SLOW_MO
+from playwright.sync_api import sync_playwright
 
 
-def start_browser() -> tuple[
-    Playwright,
-    Browser,
-    BrowserContext,
-    Page,
-]:
+def start_browser():
 
     playwright = sync_playwright().start()
 
-    browser = playwright.chromium.launch(
-        headless=HEADLESS,
-        slow_mo=SLOW_MO,
+    browser = playwright.chromium.connect_over_cdp(
+        "http://127.0.0.1:9222"
     )
 
-    context = browser.new_context(
-        viewport={
-            "width": 1440,
-            "height": 900,
-        }
-    )
+    context = browser.contexts[0]
 
-    page = context.new_page()
+    if context.pages:
+        page = context.pages[0]
+    else:
+        page = context.new_page()
 
     return (
         playwright,
@@ -41,10 +25,8 @@ def start_browser() -> tuple[
 
 
 def close_browser(
-    playwright: Playwright,
-    browser: Browser,
-) -> None:
-
+    playwright,
+    browser,
+):
     browser.close()
-
     playwright.stop()

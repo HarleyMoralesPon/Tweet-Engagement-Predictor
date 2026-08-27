@@ -6,4 +6,6 @@ data/raw/*
 data/processed/*
 models/*
 
+data/browser_session/
+
 .env

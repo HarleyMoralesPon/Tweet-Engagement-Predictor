@@ -122,6 +122,23 @@ def open_user_profile(
     username: str,
 ) -> None:
 
+    page.goto(
+        f"{X_BASE_URL}/login",
+        wait_until="domcontentloaded",
+    )
+
+    logger.info(
+        "Please log into X manually."
+    )
+
+    logger.info(
+        "Waiting 60 seconds for login..."
+    )
+
+    page.wait_for_timeout(
+        120000
+    )
+
     profile_url = (
         f"{X_BASE_URL}/{username}"
     )
@@ -136,7 +153,9 @@ def open_user_profile(
         wait_until="domcontentloaded",
     )
 
-    page.wait_for_timeout(4000)
+    page.wait_for_timeout(
+        4000
+    )
 
 
 # ==========================================
@@ -149,14 +168,14 @@ def collect_visible_posts(
 ) -> list[dict]:
 
     collected_posts = []
-
     seen_ids = set()
+
+    no_new_tweet_attempts = 0
+    max_no_new_attempts = 5
 
     while len(collected_posts) < max_tweets:
 
-        articles = page.locator(
-            "article"
-        )
+        articles = page.locator("article")
 
         count = articles.count()
 
@@ -165,10 +184,11 @@ def collect_visible_posts(
             count,
         )
 
+        tweets_found_this_round = 0
+
         for i in range(count):
 
             article = articles.nth(i)
-
 
             # ==================================
             # Tweet text
@@ -225,10 +245,17 @@ def collect_visible_posts(
                 .split("?")[0]
             )
 
+            # ==================================
+            # Skip already collected tweets
+            # ==================================
+
             if tweet_id in seen_ids:
+
                 continue
 
             seen_ids.add(tweet_id)
+
+            tweets_found_this_round += 1
 
             # ==================================
             # Publication date
@@ -321,16 +348,17 @@ def collect_visible_posts(
             )
 
             logger.info(
-                "Tweet %s | likes=%d | replies=%d | reposts=%d | bookmarks=%d",
+                "Tweet %s | likes=%d | replies=%d | reposts=%d | views=%d | bookmarks=%d",
                 tweet_id,
                 like_count,
                 reply_count,
                 repost_count,
+                view_count,
                 bookmark_count,
             )
 
             # ==================================
-            # Stop when enough tweets collected
+            # Stop when enough tweets
             # ==================================
 
             if (
@@ -352,36 +380,61 @@ def collect_visible_posts(
             break
 
         # ======================================
-        # Scroll down
+        # Check whether we found new tweets
         # ======================================
 
-        previous_count = len(
-            collected_posts
-        )
+        if tweets_found_this_round == 0:
 
-        page.mouse.wheel(
-            0,
-            2500,
-        )
+            no_new_tweet_attempts += 1
 
-        page.wait_for_timeout(
-            2500
-        )
+            logger.info(
+                "No new tweets found. "
+                "Attempt %d/%d",
+                no_new_tweet_attempts,
+                max_no_new_attempts,
+            )
+
+        else:
+
+            no_new_tweet_attempts = 0
 
         # ======================================
-        # No new tweets
+        # Stop after several failed attempts
         # ======================================
 
         if (
-            len(collected_posts)
-            == previous_count
+            no_new_tweet_attempts
+            >= max_no_new_attempts
         ):
 
             logger.info(
-                "No new posts detected."
+                "No new tweets after multiple "
+                "scroll attempts. Stopping."
             )
 
             break
+
+        # ======================================
+        # Scroll page using JavaScript
+        # ======================================
+
+        page.evaluate(
+            """
+            () => {
+                window.scrollTo(
+                    0,
+                    document.body.scrollHeight
+                );
+            }
+            """
+        )
+        # ======================================
+        # Give X time to load new tweets
+        # ======================================
+
+        page.wait_for_timeout(
+            4000
+        )
 
     return collected_posts
 
