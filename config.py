@@ -20,7 +20,7 @@ X_BASE_URL = "https://x.com"
 
 X_USERNAME = "maradiaga"
 
-MAX_TWEETS = 100
+MAX_TWEETS = 500
 
 
 # ==========================================
