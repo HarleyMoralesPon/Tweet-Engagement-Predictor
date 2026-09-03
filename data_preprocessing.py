@@ -31,8 +31,89 @@ def count_mentions(text):
 
 
 def count_urls(text):
-    return len(re.findall(r"https?://\S+", text))
+    return text.count("<URL>")
 
+
+# ==========================================
+# Extract author's actual tweet text
+# ==========================================
+def extract_tweet_text(text):
+    lines = text.split("\n")
+    lines = [line.strip() for line in lines if line.strip()]
+
+    # ------------------------------------------
+    # 1. Find the date
+    # ------------------------------------------
+
+    date_index = None
+
+    for i, line in enumerate(lines):
+        if re.match(
+            r"^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) "
+            r"\d{1,2}, \d{4}$",
+            line
+        ):
+            date_index = i
+            break
+
+    if date_index is None:
+        return text.strip()
+
+    # ------------------------------------------
+    # 2. Everything after the date
+    # ------------------------------------------
+
+    tweet_lines = lines[date_index + 1:]
+
+    # ------------------------------------------
+    # 3. Remove "Show more" and quoted tweets
+    # ------------------------------------------
+
+    clean_lines = []
+
+    for line in tweet_lines:
+
+        if line == "Quote":
+            break
+
+        if line == "Show more":
+            break
+
+        clean_lines.append(line)
+
+    # ------------------------------------------
+    # 4. Join lines
+    # ------------------------------------------
+
+    tweet_text = " ".join(clean_lines)
+
+    # ------------------------------------------
+    # 5. Remove trailing engagement metrics
+    # ------------------------------------------
+
+    tweet_text = re.sub(
+        r"\s+\d[\d.,]*\s+\d[\d.,]*\s+[\d.,]+[KMB]?\s*$",
+        "",
+        tweet_text
+    )
+
+    # ------------------------------------------
+    # 6. Replace URLs with <URL>
+    # ------------------------------------------
+
+    tweet_text = re.sub(
+        r"https?://\S+",
+        "<URL>",
+        tweet_text
+    )
+
+    # ------------------------------------------
+    # 7. Clean spaces
+    # ------------------------------------------
+
+    tweet_text = re.sub(r"\s+", " ", tweet_text)
+
+    return tweet_text.strip()
 
 # ==========================================
 # Create processed dataset
@@ -52,7 +133,9 @@ def create_processed_dataset():
     # Remove tweets without valid views
     # ==========================================
 
-    df = df[df["view_count"] > 0].copy()
+    df = df[
+        df["view_count"] > 0
+    ].copy()
 
     # ==========================================
     # Engagement
@@ -93,29 +176,39 @@ def create_processed_dataset():
 
     df["hour"] = df["created_at"].dt.hour
 
-    df["day_of_week"] = df["created_at"].dt.dayofweek
+    df["day_of_week"] = (
+        df["created_at"].dt.dayofweek
+    )
+
+    # ==========================================
+    # Extract author's actual tweet text
+    # ==========================================
+
+    df["tweet_text"] = df["text"].apply(
+        extract_tweet_text
+    )
 
     # ==========================================
     # Text structural features
     # ==========================================
 
-    df["char_count"] = df["text"].apply(
+    df["char_count"] = df["tweet_text"].apply(
         count_characters
     )
 
-    df["word_count"] = df["text"].apply(
+    df["word_count"] = df["tweet_text"].apply(
         count_words
     )
 
-    df["hashtag_count"] = df["text"].apply(
+    df["hashtag_count"] = df["tweet_text"].apply(
         count_hashtags
     )
 
-    df["mention_count"] = df["text"].apply(
+    df["mention_count"] = df["tweet_text"].apply(
         count_mentions
     )
 
-    df["url_count"] = df["text"].apply(
+    df["url_count"] = df["tweet_text"].apply(
         count_urls
     )
 
@@ -128,7 +221,9 @@ def create_processed_dataset():
         index=False
     )
 
-    print(f"Processed dataset: {df.shape}")
+    print(
+        f"Processed dataset: {df.shape}"
+    )
 
     print(
         f"Saved to: {PROCESSED_FILE}"
@@ -138,8 +233,25 @@ def create_processed_dataset():
 
 
 # ==========================================
-# Run
+# Test extraction
 # ==========================================
 
 if __name__ == "__main__":
-    create_processed_dataset()
+
+    df = pd.read_csv(RAW_FILE)
+
+    for index in [0, 10, 50, 100]:
+
+        print("\n" + "=" * 80)
+        print(f"TWEET {index}")
+        print("=" * 80)
+
+        print("\nRAW:")
+        print(df.loc[index, "text"])
+
+        print("\nEXTRACTED:")
+        print(
+            extract_tweet_text(
+                df.loc[index, "text"]
+            )
+        )
